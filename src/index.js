@@ -23,8 +23,17 @@ app.use("/api/auth", authRoutes);
 // Rutas de cursos
 app.use("/api/cursos", require("./routes/cursoRoutes"));
 
-// En tu archivo principal (después de las rutas de cursos)
+// Rutas de eventos
 app.use("/api/eventos", require("./routes/eventoRoutes"));
 
+// Rutas de notificaciones
+app.use("/api/notificaciones", require("./routes/notificacionRoutes"));
+
+app.use("/api/recordatorios", require("./routes/recordatoriosRoutes"));
+
+app.use("/api/dashboard", require("./routes/dashboardRoutes"));
+
+const { iniciarCronJobs } = require("./services/recordatoriosService");
+iniciarCronJobs();
 
 app.listen(PORT, () => console.log("Servidor corriendo en el puerto " + PORT));

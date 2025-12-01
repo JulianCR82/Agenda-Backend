@@ -1,4 +1,5 @@
 const Curso = require("../models/Curso");
+const { crearNotificacion } = require("./notificacionController");
 
 exports.crearCurso = async (req, res) => {
   try {
@@ -44,6 +45,145 @@ exports.obtenerCursosDocente = async (req, res) => {
   }
 };
 
+// Buscar cursos (para estudiantes)
+exports.buscarCursos = async (req, res) => {
+  try {
+    const { q, limite = 20 } = req.query;
+
+    if (!q || q.trim() === "") {
+      return res.status(400).json({ message: "Debes proporcionar un término de búsqueda" });
+    }
+
+    // Buscar por nombre o código (case insensitive)
+    const cursos = await Curso.find({
+      $or: [
+        { nombre: { $regex: q, $options: "i" } },
+        { codigo: { $regex: q, $options: "i" } }
+      ]
+    })
+    .populate("docente", "nombre email")
+    .select("nombre codigo descripcion color fechaInicio fechaFin docente estudiantes")
+    .limit(parseInt(limite));
+
+    // Agregar información adicional para el estudiante
+    const cursosConInfo = cursos.map(curso => ({
+      _id: curso._id,
+      nombre: curso.nombre,
+      codigo: curso.codigo,
+      descripcion: curso.descripcion,
+      color: curso.color,
+      fechaInicio: curso.fechaInicio,
+      fechaFin: curso.fechaFin,
+      docente: curso.docente,
+      totalEstudiantes: curso.estudiantes.length
+    }));
+
+    res.json({ 
+      cursos: cursosConInfo, 
+      total: cursosConInfo.length,
+      busqueda: q
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al buscar cursos" });
+  }
+};
+
+// Listar todos los cursos disponibles (para estudiantes)
+exports.listarCursosDisponibles = async (req, res) => {
+  try {
+    const { limite = 50, skip = 0 } = req.query;
+
+    const cursos = await Curso.find()
+      .populate("docente", "nombre email")
+      .select("nombre codigo descripcion color fechaInicio fechaFin docente estudiantes")
+      .skip(parseInt(skip))
+      .limit(parseInt(limite))
+      .sort({ fechaCreacion: -1 });
+
+    const total = await Curso.countDocuments();
+
+    const cursosConInfo = cursos.map(curso => ({
+      _id: curso._id,
+      nombre: curso.nombre,
+      codigo: curso.codigo,
+      descripcion: curso.descripcion,
+      color: curso.color,
+      fechaInicio: curso.fechaInicio,
+      fechaFin: curso.fechaFin,
+      docente: curso.docente,
+      totalEstudiantes: curso.estudiantes.length
+    }));
+
+    res.json({ 
+      cursos: cursosConInfo, 
+      total,
+      pagina: Math.floor(parseInt(skip) / parseInt(limite)) + 1,
+      totalPaginas: Math.ceil(total / parseInt(limite))
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al listar cursos" });
+  }
+};
+
+// Obtener información pública de un curso
+exports.obtenerInfoCurso = async (req, res) => {
+  try {
+    const cursoId = req.params.id;
+
+    const curso = await Curso.findById(cursoId)
+      .populate("docente", "nombre email");
+
+    if (!curso) {
+      return res.status(404).json({ message: "Curso no encontrado" });
+    }
+
+    // Información pública del curso
+    const infoCurso = {
+      _id: curso._id,
+      nombre: curso.nombre,
+      codigo: curso.codigo,
+      descripcion: curso.descripcion,
+      color: curso.color,
+      fechaInicio: curso.fechaInicio,
+      fechaFin: curso.fechaFin,
+      docente: curso.docente,
+      totalEstudiantes: curso.estudiantes.length,
+      fechaCreacion: curso.fechaCreacion
+    };
+
+    res.json({ curso: infoCurso });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al obtener información del curso" });
+  }
+};
+
+// Obtener cursos en los que el estudiante está inscrito
+exports.obtenerCursosEstudiante = async (req, res) => {
+  try {
+    if (req.usuario.rol !== "estudiante") {
+      return res.status(403).json({ message: "Solo los estudiantes pueden ver sus cursos" });
+    }
+
+    const estudianteId = req.usuario.id;
+
+    const cursos = await Curso.find({ estudiantes: estudianteId })
+      .populate("docente", "nombre email")
+      .sort({ fechaCreacion: -1 });
+
+    res.json({ cursos, total: cursos.length });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al obtener cursos del estudiante" });
+  }
+};
+
 exports.solicitarUnion = async (req, res) => {
   try {
     const idEstudiante = req.usuario.id;
@@ -73,9 +213,6 @@ exports.solicitarUnion = async (req, res) => {
     res.status(500).json({ message: "Error en el servidor" });
   }
 };
-
-
-
 
 exports.verSolicitudes = async (req, res) => {
   try {
@@ -119,6 +256,14 @@ exports.aceptarSolicitud = async (req, res) => {
     curso.estudiantes.push(idEstudiante);
     await curso.save();
 
+    await crearNotificacion({
+      destinatario: idEstudiante,
+      tipo: "solicitud_aceptada",
+      titulo: "Solicitud aceptada",
+      mensaje: `Tu solicitud para unirte al curso "${curso.nombre}" ha sido aceptada`,
+      curso: idCurso
+    });
+
     res.json({ message: "Estudiante aceptado correctamente" });
 
   } catch (error) {
@@ -144,6 +289,14 @@ exports.rechazarSolicitud = async (req, res) => {
 
     curso.solicitudes.pull(idEstudiante);
     await curso.save();
+
+    await crearNotificacion({
+      destinatario: idEstudiante,
+      tipo: "solicitud_rechazada",
+      titulo: "Solicitud rechazada",
+      mensaje: `Tu solicitud para unirte al curso "${curso.nombre}" ha sido rechazada`,
+      curso: idCurso
+    });
 
     res.json({ message: "Solicitud rechazada correctamente" });
 

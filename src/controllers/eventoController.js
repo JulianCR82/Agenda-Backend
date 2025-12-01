@@ -1,5 +1,6 @@
 const Evento = require("../models/Evento");
 const Curso = require("../models/Curso");
+const { crearNotificacion } = require("./notificacionController");
 
 // Crear evento
 exports.crearEvento = async (req, res) => {
@@ -24,6 +25,7 @@ exports.crearEvento = async (req, res) => {
     }
 
     let nuevoEvento;
+    let curso;
 
     // CASO 1: Docente crea evento para un curso
     if (rolCreador === "docente" && cursoId) {
@@ -88,6 +90,17 @@ exports.crearEvento = async (req, res) => {
     }
 
     await nuevoEvento.save();
+
+    for (const estudianteId of nuevoEvento.destinatarios) {
+      await crearNotificacion({
+        destinatario: estudianteId,
+        tipo: "evento_nuevo",
+        titulo: `Nuevo evento: ${titulo}`,
+        mensaje: `Se ha creado un nuevo evento "${titulo}" en el curso ${curso?.nombre || 'tu curso'}`,
+        evento: nuevoEvento._id,
+        curso: cursoId
+      });
+    }
     
     const eventoCompleto = await Evento.findById(nuevoEvento._id)
       .populate("curso", "nombre codigo color")
@@ -241,6 +254,24 @@ exports.editarEvento = async (req, res) => {
     if (estado) evento.estado = estado;
 
     await evento.save();
+
+    if (evento.esEventoCurso && evento.destinatarios.length > 0) {
+      const cursoData = await Curso.findById(evento.curso);
+      
+      for (const estudianteId of evento.destinatarios) {
+        // No notificar al creador (docente)
+        if (estudianteId.toString() !== evento.creador.toString()) {
+          await crearNotificacion({
+            destinatario: estudianteId,
+            tipo: "evento_editado",
+            titulo: `Evento modificado: ${evento.titulo}`,
+            mensaje: `El evento "${evento.titulo}" del curso ${cursoData?.nombre || ''} ha sido modificado`,
+            evento: evento._id,
+            curso: evento.curso
+          });
+        }
+      }
+    }
 
     const eventoActualizado = await Evento.findById(eventoId)
       .populate("curso", "nombre codigo color")
